@@ -1,0 +1,92 @@
+name: TestLegend
+
+# Controls when the workflow will run
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'The channel used for the deployed bundle.'
+        required: false
+        default: 'edge'
+
+jobs:
+  smoke-gitlab-com:
+    env:
+      GITLAB_CLIENT_ID: ${{ secrets.GITLAB_CLIENT_ID }}
+      GITLAB_CLIENT_SECRET: ${{ secrets.GITLAB_CLIENT_SECRET }}
+    runs-on: ubuntu-20.04
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install microk8s
+        run: |
+          sudo snap install microk8s --classic
+          sudo snap alias microk8s.kubectl kubectl
+          sudo usermod -a -G microk8s $USER
+          sudo chown -f -R $USER ~/.kube
+
+          # We need DNS, Storage, and Ingress enabled.
+          # We also need to ensure that it finishes enabling them.
+          microk8s enable dns storage ingress
+          microk8s status --wait-ready
+
+          wait_for_service(){
+            svc_name="$1"
+
+            for i in {1..5}; do
+              if [[ "enabled" == "$(microk8s status --addon ${svc_name})" ]]; then
+                echo "Service ${svc_name} is active."
+                return
+              fi
+
+              echo "Waiting for ${svc_name} to become active."
+              sleep 5
+            done
+
+            echo "Timeout waiting for ${svc_name} to become active."
+            exit 1
+          }
+
+          wait_for_service dns
+          wait_for_service storage
+          wait_for_service ingress
+
+      - name: Installing and bootstrapping Juju
+        run: |
+          sudo snap install juju --classic
+          juju bootstrap microk8s finos-legend
+
+      - name: Deploy Legend
+        run: |
+          juju add-model finos-legend
+          juju deploy finos-legend-bundle --trust --channel=${{ github.event.inputs.channel }}
+
+          wait_for_unit(){
+            unit_name="$1"
+            desired_state="${2:-active}"
+
+            for i in {1..30}; do
+              if [[ "$(juju status ${unit_name} --format=short)" == *"${desired_state}"* ]]; then
+                echo "Unit ${unit_name} is ${desired_state}."
+                return
+              fi
+
+              echo "Waiting for ${unit_name} to become ${desired_state}."
+              sleep 5
+            done
+
+            echo "Timeout waiting for ${unit_name} to become ${desired_state}."
+            exit 1
+          }
+
+          wait_for_unit "mongodb/0"
+          juju config gitlab-integrator gitlab-client-id="${{ env.GITLAB_CLIENT_ID }}" gitlab-client-secret="${{ env.GITLAB_CLIENT_SECRET }}"
+
+          wait_for_unit "gitlab-integrator/0"
+          wait_for_unit "legend-studio/0"
+
+      - name: Teardown Legend and Juju
+        run: |
+          juju destroy-model -y --destroy-storage finos-legend
+          juju destroy-controller -y --destroy-all-models --destroy-storage finos-legend
