@@ -25,6 +25,8 @@ applications:
     scale: 1
     options:
       external-hostname: *external-hostname
+    resources:
+      sdlc-image: "finos/legend-sdlc-server:0.69.1"
 
   legend-engine:
     charm: "finos-legend-engine-k8s"
@@ -32,6 +34,8 @@ applications:
     scale: 1
     options:
       external-hostname: *external-hostname
+    resources:
+      engine-image: "finos/legend-engine-server:2.55.0"
 
   legend-studio:
     charm: "finos-legend-studio-k8s"
@@ -39,6 +43,8 @@ applications:
     scale: 1
     options:
       external-hostname: *external-hostname
+    resources:
+      studio-image: "finos/legend-studio:3.6.0"
 
   gitlab-integrator:
     charm: "finos-legend-gitlab-integrator-k8s"
